@@ -1,7 +1,8 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>FIT 轨迹生成工具</title>
     <link
       rel="stylesheet"
@@ -15,6 +16,13 @@
     <div id="app">
       <div class="sidebar">
         <h1>FIT 轨迹生成工具</h1>
+
+        <!-- 地图搜索 -->
+        <div class="search-box">
+          <input id="searchInput" type="text" placeholder="搜索地点（如：中山大学东校区）" autocomplete="off" />
+          <div id="searchResults" class="search-results"></div>
+        </div>
+
         <div class="form-group">
           <label for="hrRest">静息心率</label>
           <input id="hrRest" type="number" min="30" max="120" value="60" />
@@ -23,6 +31,19 @@
           <label for="hrMax">最大心率</label>
           <input id="hrMax" type="number" min="100" max="220" value="180" />
         </div>
+
+        <!-- 目标距离 -->
+        <div class="form-group">
+          <label for="targetDistance">目标距离（公里，0 表示不限）</label>
+          <div class="target-row">
+            <input id="targetDistance" type="number" min="0" step="0.1" value="0" placeholder="如 5.0" />
+            <div id="targetProgress" class="target-progress">
+              <div class="progress-bar" id="progressFill"></div>
+            </div>
+            <span id="targetPercent" class="target-percent"></span>
+          </div>
+        </div>
+
         <div class="form-group">
           <label for="lapCount">圈数（重复次数）</label>
           <input id="lapCount" type="number" min="1" value="1" />
@@ -32,13 +53,36 @@
           <input id="exportCount" type="number" min="1" max="10" value="1" />
         </div>
         <div id="exportTimes" class="export-times"></div>
+
+        <!-- 快捷配速预设 -->
+        <div class="pace-presets">
+          <span class="preset-label">快捷配速：</span>
+          <button type="button" class="preset-btn" data-pace="270">4'30"</button>
+          <button type="button" class="preset-btn" data-pace="300">5'00"</button>
+          <button type="button" class="preset-btn" data-pace="330">5'30"</button>
+          <button type="button" class="preset-btn" data-pace="360">6'00"</button>
+          <button type="button" class="preset-btn" data-pace="390">6'30"</button>
+          <button type="button" class="preset-btn" data-pace="420">7'00"</button>
+          <button type="button" class="preset-btn" data-pace="480">8'00"</button>
+        </div>
+
         <div id="distanceInfo" class="distance-info"></div>
         <div class="form-group buttons">
-          <button id="clearRoute" type="button">清除轨迹</button>
-          <button id="previewBtn" type="button">预览曲线</button>
-          <button id="generateFit" type="button">生成 FIT 文件</button>
+          <button id="undoBtn" type="button" class="btn-undo" title="撤销上一个点 (Ctrl+Z)">↩ 撤销</button>
+          <button id="clearRoute" type="button" class="btn-danger">清除轨迹</button>
+          <button id="previewBtn" type="button" class="btn-secondary">预览曲线</button>
+          <button id="generateFit" type="button" class="btn-primary">生成 FIT 文件</button>
         </div>
         <div id="message" class="message"></div>
+
+        <!-- 生成进度 -->
+        <div id="progressContainer" class="progress-container" style="display:none">
+          <div class="progress-bar-wrap">
+            <div id="genProgressFill" class="gen-progress-fill"></div>
+          </div>
+          <span id="genProgressText" class="gen-progress-text"></span>
+        </div>
+
         <div class="preview-panel">
           <div class="preview-chart">
             <h2>配速预览（min/km）</h2>
@@ -50,7 +94,7 @@
           </div>
         </div>
         <div id="liveInfo" class="live-info"></div>
-        <p class="tip">在右侧地图上点击绘制轨迹点，系统会自动连成路线。</p>
+        <p class="tip">在地图上点击绘制轨迹点 · 右键删除点 · Ctrl+Z 撤销</p>
       </div>
       <div id="map"></div>
     </div>

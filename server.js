@@ -375,6 +375,137 @@ app.post("/api/generate-fit", (req, res) => {
   }
 });
 
+app.post("/api/generate-fit-batch", async (req, res) => {
+  try {
+    const { exports: exportList, hrRest, hrMax, lapCount } = req.body || {};
+
+    if (!Array.isArray(exportList) || exportList.length === 0) {
+      return res.status(400).json({ error: "缺少导出列表" });
+    }
+    if (exportList.length > 10) {
+      return res.status(400).json({ error: "最多一次导出 10 份" });
+    }
+
+    const hrRestVal = Number.isFinite(Number(hrRest)) ? Number(hrRest) : 60;
+    const hrMaxVal = Number.isFinite(Number(hrMax)) ? Number(hrMax) : 180;
+    const lapsRaw = Number(lapCount);
+    const laps = Number.isFinite(lapsRaw) && lapsRaw > 0 ? Math.floor(lapsRaw) : 1;
+
+    const buffers = [];
+
+    for (let i = 0; i < exportList.length; i++) {
+      const exp = exportList[i];
+      const { startTime, points, paceSecondsPerKm } = exp;
+
+      if (!startTime || !points || !Array.isArray(points) || points.length < 2) {
+        return res.status(400).json({ error: `第 ${i + 1} 份缺少参数` });
+      }
+
+      const startDate = new Date(startTime);
+      if (Number.isNaN(startDate.getTime())) {
+        return res.status(400).json({ error: `第 ${i + 1} 份开始时间无效` });
+      }
+
+      const pace = Number(paceSecondsPerKm) > 0 ? Number(paceSecondsPerKm) : 360;
+      const variant = i + 1;
+
+      const basePoints = buildClosedBasePoints(points);
+      const allPoints = [];
+      const usedLaps = laps > 0 ? laps : 1;
+
+      for (let lapIndex = 0; lapIndex < usedLaps; lapIndex++) {
+        const radiusMeters = 5 + Math.random() * 10;
+        const angle = Math.random() * Math.PI * 2;
+        const offsetLatMeters = radiusMeters * Math.cos(angle);
+        const offsetLonMeters = radiusMeters * Math.sin(angle);
+
+        for (let j = 0; j < basePoints.length; j++) {
+          const p = basePoints[j];
+          const noisyPoint =
+            usedLaps === 1 ? p : offsetPointMeters(p, offsetLatMeters, offsetLonMeters);
+          allPoints.push(noisyPoint);
+        }
+      }
+
+      const distances = [0];
+      let totalDist = 0;
+      for (let j = 1; j < allPoints.length; j++) {
+        const d = haversineDistance(
+          allPoints[j - 1].lat, allPoints[j - 1].lng,
+          allPoints[j].lat, allPoints[j].lng
+        );
+        totalDist += d;
+        distances.push(totalDist);
+      }
+
+      if (totalDist === 0) {
+        return res.status(400).json({ error: "轨迹距离为 0" });
+      }
+
+      const { samples, totalDurationSec } = computeSamples(
+        allPoints, distances, totalDist, pace, hrRestVal, hrMaxVal
+      );
+
+      const encoder = new Encoder();
+      encoder.onMesg(Profile.MesgNum.FILE_ID, {
+        manufacturer: "development", product: 1,
+        timeCreated: startDate, type: "activity"
+      });
+      encoder.onMesg(Profile.MesgNum.DEVICE_INFO, {
+        timestamp: startDate, manufacturer: "development",
+        product: 1, serialNumber: 1
+      });
+      const avgSpeed = totalDist / totalDurationSec;
+      const sessionEnd = new Date(startDate.getTime() + totalDurationSec * 1000);
+      encoder.onMesg(Profile.MesgNum.SESSION, {
+        timestamp: sessionEnd, startTime: startDate,
+        totalElapsedTime: totalDurationSec, totalTimerTime: totalDurationSec,
+        totalDistance: totalDist, sport: "running", subSport: "generic", avgSpeed
+      });
+      encoder.onMesg(Profile.MesgNum.ACTIVITY, {
+        timestamp: sessionEnd, totalTimerTime: totalDurationSec,
+        numSessions: 1, type: "manual"
+      });
+      for (let j = 0; j < samples.length; j++) {
+        const s = samples[j];
+        const timestamp = new Date(startDate.getTime() + s.timeSec * 1000);
+        encoder.onMesg(Profile.MesgNum.RECORD, {
+          timestamp,
+          positionLat: toSemicircles(allPoints[j].lat),
+          positionLong: toSemicircles(allPoints[j].lng),
+          distance: s.distance, speed: s.speed, heartRate: s.heartRate
+        });
+      }
+
+      const uint8Array = encoder.close();
+      const buffer = Buffer.from(uint8Array);
+      buffers.push({ name: exportList.length > 1 ? `run_${variant}.fit` : "run.fit", data: buffer });
+    }
+
+    // Single file: return plain .fit; Multiple: ZIP
+    if (buffers.length === 1) {
+      res.setHeader("Content-Type", "application/vnd.ant.fit");
+      res.setHeader("Content-Disposition", `attachment; filename=${buffers[0].name}`);
+      return res.send(buffers[0].data);
+    }
+
+    // ZIP all files using adm-zip
+    const AdmZip = (await import("adm-zip")).default || (await import("adm-zip"));
+    const zip = new AdmZip();
+    for (const buf of buffers) {
+      zip.addFile(buf.name, buf.data);
+    }
+    const zipBuffer = zip.toBuffer();
+
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename=fit_exports_${Date.now()}.zip`);
+    return res.send(zipBuffer);
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: "批量生成失败" });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Server listening on http://localhost:${PORT}`);
 });
